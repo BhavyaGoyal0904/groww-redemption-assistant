@@ -18,3 +18,14 @@ pip install -r requirements.txt
 streamlit run app.py          # add MISTRAL_API_KEY to .streamlit/secrets.toml for AI mode
 ```
 Edit content in `build_dataset.py`, then `python build_dataset.py data` to regenerate the CSVs.
+
+## SIP assistants (reduce SIP mandate failures)
+- **Start a new SIP** (Explore): the bot asks salary date, take-home pay, fixed costs, day-to-day spending, existing SIPs and
+  emergency fund. A calculator in `sip_flows.py` (not the AI) suggests an amount the budget can sustain and a date 3 days after
+  salary, then pre-fills the SIP form. With an API key, one free-text message ("salary 60k on the 1st, rent 18k…") is parsed by the AI;
+  every extracted number must appear in the message.
+- **SIP check-in** (Dashboard/SIPs card, shown 7 days before the SIP date; the prototype uses a demo date): asks about salary
+  timing, big expenses and expected balance, then suggests keeping, skipping an instalment, changing the date or lowering the amount.
+  Groww applies edits only if made 2+ working days before the debit, so 7 days leaves time to act.
+- Typed questions in either flow are answered from `data/sip_responses.csv` + `data/sip_kb.csv` (sources: SEBI uniform SIP
+  cancellation rule, Groww help, bank bounce charges). Regenerate with `python build_sip_dataset.py data`.
