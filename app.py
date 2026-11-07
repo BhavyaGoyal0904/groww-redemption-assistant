@@ -146,6 +146,17 @@ def explore():
     cols = st.columns(3)
     for i, c in enumerate(["High return", "SIP with ₹500", "Tax Saving", "Large Cap", "Mid Cap", "Small Cap"]):
         cols[i % 3].markdown(f"<div class='card' style='text-align:center'>{c}</div>", unsafe_allow_html=True)
+    st.button("Start a new SIP", type="primary", use_container_width=True, on_click=go, args=("new_sip",))
+
+
+def new_sip():
+    topbar(); back("Start a new SIP", "explore")
+    fund = st.selectbox("Fund", [f["name"] for f in FUNDS])
+    amt = st.number_input("Monthly amount (₹)", min_value=500, value=2000, step=500)
+    day = st.selectbox("SIP date (every month)", [1, 5, 10, 15, 20, 25], index=1)
+    if st.button(f"Start SIP of {inr(amt)}/month", type="primary", use_container_width=True):
+        st.success(f"Prototype: no real SIP is created. In the app, this would start a {inr(amt)} monthly SIP "
+                   f"in {fund} on the {day}{'st' if day == 1 else 'th'} of every month.")
 
 
 def choose(screen):
@@ -302,4 +313,4 @@ with st.sidebar:
         st.rerun()
 
 {"dashboard": dashboard, "explore": explore, "details": details, "redeem": redeem_screen,
- "chat": chat, "profile": profile}.get(S.screen, dashboard)()
+ "chat": chat, "profile": profile, "new_sip": new_sip}.get(S.screen, dashboard)()
