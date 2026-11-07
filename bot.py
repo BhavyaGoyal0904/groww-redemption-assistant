@@ -159,7 +159,7 @@ class Bot:
         for i, r in enumerate(self.resp):
             if path and r["reason_path"] == path:
                 s[i] *= 1.2
-            if r["id"] == "R00":
+            if r["id"] == "R00" or r["id"].startswith("X"):  # exits come from chips/guardrails, never from fuzzy matching
                 s[i] = 0
         order = sorted(range(len(s)), key=lambda i: -s[i])
         return [(self.resp[i]["id"], s[i]) for i in order]

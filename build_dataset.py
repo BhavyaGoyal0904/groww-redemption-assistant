@@ -116,8 +116,8 @@ def r(i, path, stage, user, variants, bot, chips, rtype, kb):
 
 # ---------- OPENER ----------
 r("R00","all","opener","[user taps Redeem]","",
- "Before you redeem, I can walk you through costs, alternatives and what it means for your goals. Whatever you decide is completely up to you. What's the main reason for redeeming?",
- "I need the money | Concerned about returns | My goal is complete | Other","clarify","")
+ "Let's review your decision before you redeem.\n\nI can help you understand exit load, possible taxes and the impact on your investment goals.\n\n**What's your main reason for redeeming?**",
+ "I need the money | Concerned about returns | My goal is complete | Others","clarify","")
 
 # ---------- NEED MONEY ----------
 r("N01","need_money","reason","I need the money","I need cash | money required | urgent need of funds | need money for wedding | need funds for car house fees | want to buy a car | buying a house | bike | medical expense | need 20000 | need some money | withdraw for expense",
@@ -257,7 +257,7 @@ r("P08","goal_complete","detail","Can I save tax on this?","reduce tax | tax fre
  "Redeem part | Continue to redeem","answer","KB-R10|KB-R03")
 
 # ---------- OTHER ----------
-r("O01","other","reason","Other","something else | different reason",
+r("O01","other","reason","Others","other | something else | different reason",
  "Sure, tell me what's on your mind, or pick one below.",
  "App or redemption issue | Moving to another app or fund | Worried about safety | Something else","clarify","")
 r("O02","other","app_issue","App or redemption issue","app not working | error",
@@ -269,7 +269,7 @@ r("O03","other","app_issue","Redeem button not working / units not available","c
 r("O04","other","app_issue","Order failed or stuck","redemption pending | order failed",
  "Orders placed after 3 PM or on holidays are processed the next business day, so they can show as pending. If it has failed or stays pending beyond that, please contact Groww support with the order ID.",
  "Contact support","answer","KB-R06|KB-O02")
-r("O05","other","app_issue","Money not received","redemption amount not credited",
+r("O05","other","app_issue","Money not received","redemption amount not credited | money has not come | redemption money not received | have not received my money | payment not credited to bank | money not in account",
  "Equity fund redemptions usually reach your registered bank account in 2-3 working days. If it's later than that, raise it with Groww support. If it's still unresolved, you can escalate to the fund house and then SEBI SCORES.",
  "Contact support | Open SCORES","answer","KB-R06|KB-O02")
 r("O06","other","app_issue","Amount looks wrong","different amount | less money than shown",
