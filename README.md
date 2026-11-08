@@ -29,3 +29,11 @@ Edit content in `build_dataset.py`, then `python build_dataset.py data` to regen
   Groww applies edits only if made 2+ working days before the debit, so 7 days leaves time to act.
 - Typed questions in either flow are answered from `data/sip_responses.csv` + `data/sip_kb.csv` (sources: SEBI uniform SIP
   cancellation rule, Groww help, bank bounce charges). Regenerate with `python build_sip_dataset.py data`.
+
+## The assistant can act on SIPs (with validation)
+In the SIP check-in (or "Ask Groww AI to skip or change a SIP" on the SIPs tab) the assistant can **skip an instalment,
+move a SIP date or change the amount**, from a button or free text ("move my motilal sip to the 8th").
+Every action: propose → validate (shown as ✅/⚠️/❌) → user taps Confirm → re-validated → executed → receipt with Undo.
+Rules checked (`sip_actions.py`): requested more than 2 working days before the debit (Groww), one skip at a time per SIP,
+no 3rd skipped/missed instalment in a row (cancels the SIP), dates 1st–28th, amount ≥ ₹500 (prototype minimum) and within the
+autopay limit (mock ₹15,000). Changes apply to a mock account in the session; the SIPs tab lists them with Undo.

@@ -2,17 +2,19 @@
 Flow: Dashboard -> fund -> Investment details -> Redeem -> "consult AI?" pop-up -> Yes: AI consultation / No: redeem screen.
 Run: streamlit run app.py"""
 import os
+import re
 from datetime import date, timedelta
 import streamlit as st
 from bot import Bot, norm, SYSTEM_SIP
 from sip_flows import Planner, CheckIn, EXTRACT_SYSTEM, ordinal
+from sip_actions import SipBook, parse_intent, dtext
 
 st.set_page_config(page_title="Redemption Assistant", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
 # ---------------- mock portfolio (case-study data) ----------------
 FUNDS = [
     dict(id="motilal", name="Motilal Oswal Midcap Fund Direct Growth", short="Motilal Oswal Midcap", cat="Mid Cap", cur=52129, inv=46998,
-         d1=167.02, folio="91432867 / 0", sip=2611, day=5),
+         d1=167.02, folio="91432867 / 0", sip=2611, day=5, history=["paid", "paid", "skipped"]),
     dict(id="icici", name="ICICI Prudential Commodities Fund Direct Growth", short="ICICI Pru Commodities", cat="Thematic", cur=48310,
          inv=38500, d1=-72.40, folio="58210934 / 12", sip=2500, day=10),
     dict(id="quant", name="Quant Small Cap Fund Direct Plan Growth", short="Quant Small Cap", cat="Small Cap", cur=61245, inv=42000,
@@ -35,7 +37,6 @@ CHECK_DAY = 5
 DUE_DATE = next_on(CHECK_DAY, date.today())
 DEMO_TODAY = DUE_DATE - timedelta(days=7)
 DUE_TEXT = f"{DUE_DATE.day} {DUE_DATE.strftime('%b')}"
-DUE_SIPS = [(f["id"], f["short"], f["sip"]) for f in FUNDS if f["day"] == CHECK_DAY]
 BY_ID = {f["id"]: f for f in FUNDS}
 AI_FUND = "motilal"  # the reviewed answers and their numbers are written for this holding
 
@@ -107,6 +108,11 @@ div[data-testid="stButton"] button { border-radius: 10px; }
 S = st.session_state
 S.setdefault("screen", "dashboard")
 S.setdefault("fund", None)
+S.setdefault("book", SipBook(FUNDS, DEMO_TODAY))
+
+
+def due_sips():
+    return S.book.due_on(DUE_DATE)
 
 
 def go(screen, **kw):
@@ -149,29 +155,55 @@ def checkin_banner():
     if S.get("checked_in"):
         return
     with st.container(border=True):
-        st.markdown(f"🔔 **SIP check-in:** {inr(sum(a for _, _, a in DUE_SIPS))} of SIPs will be debited on **{DUE_TEXT}**. "
+        due = due_sips()
+        if not due:
+            return
+        st.markdown(f"🔔 **SIP check-in:** {inr(sum(a for _, _, a in due))} of SIPs will be debited on **{DUE_TEXT}**. "
                     "A 1-minute check can help avoid a failed debit.")
         st.button("Start check-in", key=f"checkin-{S.screen}", on_click=start_checkin, type="primary")
         st.caption(f"Prototype: this card appears 7 days before a SIP date. Demo date: {DEMO_TODAY.day} {DEMO_TODAY.strftime('%b %Y')}.")
 
 
 def start_checkin():
-    S.checkin = CheckIn(DUE_SIPS, DUE_TEXT)
+    S.checkin = CheckIn(due_sips() or [(f, S.book.sips[f]["name"], S.book.sips[f]["amount"]) for f in S.book.sips][:1], DUE_TEXT)
     S.ck_msgs = S.checkin.start()
+    S.proposal, S.pending = None, None
+    go("checkin")
+
+
+def start_manage():
+    S.checkin = CheckIn(due_sips(), DUE_TEXT)
+    S.checkin.step = "done"
+    S.ck_msgs = [sip_msg("Hi! I can **skip an instalment, move a SIP date or change an amount** for you. I'll check Groww's rules "
+                         "and ask you to confirm before changing anything. What would you like to do?",
+                         ["Skip an instalment", "Change SIP date", "Change SIP amount"])]
+    S.proposal, S.pending = None, None
     go("checkin")
 
 
 def sips():
     topbar(); tabs(); checkin_banner()
-    st.markdown(f"### Active SIPs ({len(FUNDS)})")
-    skipped = S.get("skipped", set())
-    for f in FUNDS:
-        nxt = next_on(f["day"], DEMO_TODAY)
-        status = f"⏭️ {nxt.day} {nxt.strftime('%b')} instalment skipped" if f["id"] in skipped else f"Next: {nxt.day} {nxt.strftime('%b')}"
-        st.markdown(f"<div class='card'><b>{f['name']}</b><div style='display:flex;justify-content:space-between;margin-top:6px'>"
-                    f"<span class='lbl'>{inr(f['sip'])} monthly · {ordinal(f['day'])}</span><span class='lbl'>{status}</span></div></div>",
+    b = S.book
+    st.markdown(f"### Active SIPs ({len(b.sips)})")
+    for fid, x in b.sips.items():
+        up = b.upcoming(fid)
+        status = f"⏭️ {dtext(up)} skipped · next {dtext(b.next_debit(fid))}" if up in x["skips"] else f"Next: {dtext(up)}"
+        st.markdown(f"<div class='card'><b>{BY_ID[fid]['name']}</b><div style='display:flex;justify-content:space-between;margin-top:6px'>"
+                    f"<span class='lbl'>{inr(x['amount'])} monthly · {ordinal(x['day'])}</span><span class='lbl'>{status}</span></div></div>",
                     unsafe_allow_html=True)
-    st.markdown(f"<div class='disc'>Total {inr(EXISTING_SIPS)} a month</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='disc'>Total {inr(b.total())} a month · Autopay limit ₹15,000</div>", unsafe_allow_html=True)
+    st.button("✨ Ask Groww AI to skip or change a SIP", on_click=start_manage, use_container_width=True)
+    if b.log:
+        st.markdown("#### Changes made by Groww AI")
+        for e in reversed(b.log):
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            c1.markdown(("~~" + e["text"] + "~~ _(undone)_") if e["undone"] else e["text"])
+            if not e["undone"]:
+                c2.button("Undo", key=f"undo-{e['id']}", on_click=undo_entry, args=(e["id"],))
+
+
+def undo_entry(eid):
+    S.book.undo(eid)
 
 
 def dashboard():
@@ -232,8 +264,10 @@ def flow_send(text, flow_key, msgs_key):
         msgs += [{"role": "user", "text": text},
                  sip_msg(f"Done. I've filled in {inr(flow.sip)} on the {ordinal(flow.result['day'])} below. Pick a fund and confirm.")]
         return
-    if flow_key == "checkin" and flow.step == "done":
-        out = checkin_action(text, flow)
+    if flow_key == "checkin":
+        out = agent_turn(text)
+        if out == "nav":
+            return
         if out:
             msgs += [{"role": "user", "text": text}, out]
             return
@@ -254,45 +288,115 @@ def sip_msg(text, chips=()):
     return {"role": "assistant", "text": text, "chips": list(chips), "mode": "flow", "kb": [], "checks": []}
 
 
-def checkin_action(text, flow):
-    t = norm(text)
-    by_short = {f["short"].lower(): f for f in FUNDS}
-    if t.startswith("skip ") and t.endswith(" this month"):
-        name = t[5:-11]
-        ids = [s[0] for s in DUE_SIPS] if name == "all" else [by_short[name]["id"]] if name in by_short else []
-        if ids:
-            S.skipped = S.get("skipped", set()) | set(ids)
-            S.checked_in = True
-            names = " and ".join(BY_ID[i]["short"] for i in ids)
-            return sip_msg(f"Done (prototype): the {DUE_TEXT} instalment of **{names}** is marked as skipped. In the app this is "
-                           "My SIPs > select the SIP > Edit SIP > Skip Installment. Your SIP continues next month, and with no debit "
-                           "there's no bounce fee.", ["Go to my SIPs", "Is skipping bad?"])
-    if t == "change sip date":
-        S.checked_in = True
-        return sip_msg("To move the date: My SIPs > select the SIP > Edit SIP > Edit Amount & Date, and choose a date 2-3 days after "
-                       "your salary usually arrives. Changes made within 2 working days of a debit apply from the following one. "
-                       "(Prototype: nothing is changed.)", ["Go to my SIPs", "Why SIP date after salary?"])
-    if t == "lower amount from next month":
-        S.checked_in = True
-        return sip_msg("To lower the amount: My SIPs > select the SIP > Edit SIP > Edit Amount & Date. Starting smaller and stepping up "
-                       "later is a common way to keep debits from failing. (Prototype: nothing is changed.)",
-                       ["Go to my SIPs", "What is a step-up SIP?"])
-    if t == "i'll add money":
-        S.checked_in = True
-        return sip_msg(f"Sounds good. Add it before {DUE_TEXT} and your SIPs should go through as usual.", ["Go to my SIPs"])
+CHIP_INTENTS = {"change sip date": "date", "lower amount from next month": "amount", "change sip amount": "amount",
+                "skip an instalment": "skip"}
+
+
+def agent_msg(text, chips, mode):
+    return {"role": "assistant", "text": text, "chips": list(chips), "mode": mode, "kb": [], "checks": []}
+
+
+def agent_turn(text):
+    """The assistant acting on the user's SIPs: propose -> validate -> confirm -> execute -> receipt/undo."""
+    b, t = S.book, norm(text)
+    if t == "go to my sips":
+        go("sips"); return "nav"
+    if t == "confirm" and S.get("proposal"):
+        done, blocked = b.execute(S.proposal)
+        S.proposal, S.pending, S.checked_in = None, None, True
+        due = due_sips()
+        lines = [f"- ✅ {d}" for d in done] + [f"- ❌ Not done: {x}" for x in blocked]
+        tail = f"\n\nOn {DUE_TEXT}, {inr(sum(a for _, _, a in due))} will now be debited." if due else f"\n\nNothing is due on {DUE_TEXT} now."
+        return agent_msg(("Done. Here's what changed in your SIPs (prototype account):\n" if done else "Nothing was changed:\n")
+                         + "\n".join(lines) + tail, ["Undo", "Go to my SIPs"] if done else ["Go to my SIPs"], "agent_done")
+    if t == "cancel" and (S.get("proposal") or S.get("pending")):
+        S.proposal, S.pending = None, None
+        return agent_msg("Okay, nothing has been changed.", ["Go to my SIPs"], "flow")
+    if t == "undo":
+        undone = b.undo()
+        return agent_msg(f"Undone: ~~{undone}~~. Your SIP is back as it was." if undone else "There's nothing to undo.",
+                         ["Go to my SIPs"], "agent_done")
     if t == "keep as is":
         S.checked_in = True
-        return sip_msg("Okay, no changes. Your SIPs will be debited as scheduled.", ["Go to my SIPs"])
-    if t == "go to my sips":
-        go("sips")
+        return agent_msg("Okay, no changes. Your SIPs will be debited as scheduled.", ["Go to my SIPs"], "flow")
+    if t == "i'll add money":
+        S.checked_in = True
+        return agent_msg(f"Sounds good. Add it before {DUE_TEXT} and your SIPs should go through as usual.", ["Go to my SIPs"], "flow")
+
+    m = re.fullmatch(r"skip (.+) this month", t)
+    if m:
+        name = m.group(1)
+        fids = ["*"] if name == "all" else [f for f, x in b.sips.items() if x["name"].lower() == name]
+        intent = {"kind": "skip", "fids": fids, "value": None}
+    elif t in CHIP_INTENTS:
+        intent = {"kind": CHIP_INTENTS[t], "fids": [], "value": None}
+    else:
+        intent = parse_intent(text, b)
+    pend = S.get("pending")
+    if pend:  # answering "which SIP?" / "which date?" / "which amount?"
+        fids = [f for f, x in b.sips.items() if x["name"].lower() == t] or b.find(text)
+        val = None
+        if pend["kind"] == "date":
+            mm = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", t)
+            val = int(mm.group(1)) if mm else None
+        elif pend["kind"] == "amount":
+            mm = re.search(r"(\d[\d,]{2,})", t)
+            val = int(mm.group(1).replace(",", "")) if mm else None
+        if intent and intent["kind"] != pend["kind"]:
+            pass  # user switched to a different action
+        elif fids or val is not None:
+            intent = {"kind": pend["kind"], "fids": fids or pend["fids"], "value": val if val is not None else pend.get("value")}
+        elif not intent:
+            return None
+    if not intent:
         return None
-    return None
+    S.pending = None
+
+    due_ids = [f for f, _, _ in due_sips()]
+    fids = due_ids if intent["fids"] == ["*"] else intent["fids"]
+    if not fids:
+        cands = due_ids if intent["kind"] == "skip" and due_ids else list(b.sips)
+        if len(cands) == 1:
+            fids = cands
+        else:
+            S.pending = {"kind": intent["kind"], "fids": [], "value": intent["value"]}
+            verb = {"skip": "skip", "date": "move", "amount": "change"}[intent["kind"]]
+            return agent_msg(f"Which SIP would you like to {verb}?", [b.sips[f]["name"] for f in cands] + ["Cancel"], "flow")
+    if intent["kind"] in ("date", "amount") and intent["value"] is None:
+        S.pending = {"kind": intent["kind"], "fids": fids, "value": None}
+        x = b.sips[fids[0]]
+        if intent["kind"] == "date":
+            opts = [d for d in (8, 10, 12, 15) if d != x["day"]][:3]
+            return agent_msg(f"**{x['name']}** is on the {ordinal(x['day'])}. Which date should it move to? (1st-28th; 2-3 days after "
+                             "your salary arrives is safest.)", [ordinal(d) for d in opts] + ["Cancel"], "flow")
+        opts = sorted({max(500, int(x["amount"] * p // 100 * 100)) for p in (0.75, 0.5)} - {x["amount"]}, reverse=True)
+        return agent_msg(f"**{x['name']}** is {inr(x['amount'])} a month. What should the new amount be?",
+                         [inr(o) for o in opts] + ["Cancel"], "flow")
+
+    actions = [{"kind": intent["kind"], "fid": f, "value": intent["value"]} for f in fids]
+    blocks, any_ok = [], False
+    for a in actions:
+        checks = b.validate(a)
+        icon = {"ok": "✅", "warn": "⚠️", "error": "❌"}
+        ok = not any(l == "error" for l, _ in checks)
+        any_ok |= ok
+        blocks.append(f"{b.describe(a)}\n" + "\n".join(f"- {icon[l]} {txt}" for l, txt in checks))
+    if any_ok:
+        S.proposal = actions
+        tail = "\n\nShall I go ahead? Nothing changes until you confirm." + \
+               ("" if all(not any(l == "error" for l, _ in b.validate(a)) for a in actions) else " Items marked ❌ will be left as they are.")
+        chips = ["Confirm", "Cancel"]
+    else:
+        S.proposal = None
+        tail = "\n\nI can't do this one. You could try a different option instead."
+        chips = [c for c in ("Change SIP amount", "Change SIP date", "I'll add money") if CHIP_INTENTS.get(norm(c)) != intent["kind"]] + ["Keep as is"]
+    return agent_msg("Here's what I'll do, after checking Groww's rules:\n\n" + "\n\n".join(blocks) + tail, chips, "agent_proposal")
 
 
 def render_msgs(msgs, kb_lookup):
     for i, m in enumerate(msgs):
         with st.chat_message(m["role"], avatar="✨" if m["role"] == "assistant" else "🙂"):
-            st.markdown(m["text"].replace("\n- ", "\n\n- "))
+            st.markdown(re.sub(r"(?m)^(?!- )(.+)\n- ", r"\1\n\n- ", m["text"]))
             if m["role"] == "assistant" and i > 0 and m.get("mode") in BADGE:
                 st.markdown(f"<span class='badge'>{BADGE.get(m['mode'], '')}</span>", unsafe_allow_html=True)
                 if m.get("checks") or m.get("kb"):
@@ -425,7 +529,8 @@ def profile():
 NAV = {"confirm redemption": "redeem", "go to holdings": "dashboard", "contact support": "profile"}
 BADGE = {
     "curated": "✅ Reviewed answer", "retrieved": "✅ Reviewed answer (closest match)", "ai": "✨ AI answer · passed all checks",
-    "guardrail": "🛡️ Safety rule", "fallback": "⚠️ Not sure: pointing you to an official source", "action": "↪ Prototype action",
+    "guardrail": "🛡️ Safety rule", "agent_proposal": "🛡️ Rules checked before acting · needs your confirmation",
+    "agent_done": "✅ Change made (prototype account)", "fallback": "⚠️ Not sure: pointing you to an official source", "action": "↪ Prototype action",
 }
 
 
@@ -465,7 +570,7 @@ def chat():
     msgs = S.msgs
     for i, m in enumerate(msgs):
         with st.chat_message(m["role"], avatar="✨" if m["role"] == "assistant" else "🙂"):
-            st.markdown(m["text"].replace("\n- ", "\n\n- "))
+            st.markdown(re.sub(r"(?m)^(?!- )(.+)\n- ", r"\1\n\n- ", m["text"]))
             if m["role"] == "assistant" and i > 0:
                 st.markdown(f"<span class='badge'>{BADGE.get(m['mode'], '')}</span>", unsafe_allow_html=True)
                 if m.get("checks") or m.get("kb"):
