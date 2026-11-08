@@ -19,6 +19,12 @@ TOOLS = [
                        "autopay limit and today's date. Call this before talking about specific SIPs.",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
+        "name": "check_balance",
+        "description": "Pre-debit balance check: the user's linked bank balance, known payments before the next SIP debit, "
+                       "expected balance on the debit date, SIPs due, and which SIP could be skipped if it's short. "
+                       "Use it when the user asks whether they have enough money for their SIP.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
         "name": "get_portfolio",
         "description": "Get the user's mutual fund holdings: current value, invested amount and returns per fund, and totals. "
                        "Facts only; never use them to recommend buying, selling or switching.",
@@ -101,7 +107,7 @@ class SipAgent:
         return {"items": items, "status": "prepared, waiting for the user to tap Confirm" if actions else "nothing can be prepared"}, actions
 
     # ---------- loop ----------
-    def run(self, text, history, book, context="", portfolio=None):
+    def run(self, text, history, book, context="", portfolio=None, balance=None):
         msgs = [{"role": "system", "content": SYSTEM + ("\n\nContext: " + context if context else "")}]
         for m in list(history)[-8:]:
             if m.get("text"):
@@ -122,6 +128,8 @@ class SipAgent:
                     args = {}
                 if fn == "list_sips":
                     res = self._list_sips(book)
+                elif fn == "check_balance":
+                    res = balance or {"note": "Bank not linked. The user can turn on 'Auto balance check' on the SIPs tab."}
                 elif fn == "get_portfolio":
                     res = portfolio or {"note": "portfolio not available here"}
                 elif fn == "search_knowledge":

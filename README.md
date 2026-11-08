@@ -50,3 +50,11 @@ code-generated proposal (or a reviewed answer) is shown instead; if the API fail
 The Dashboard has a Groww AI panel (chat input pinned at the bottom). It opens with what it notices (upcoming debit, a recently
 skipped instalment, autopay headroom), can run the SIP check-in inline, answers questions, discusses holdings as facts
 (`get_portfolio` tool, no advice), and proposes/executes SIP changes with the same validation → Confirm → receipt → Undo flow.
+
+### Auto balance check before each SIP debit (user test 3)
+Opt-in on the SIPs tab. With consent (production: RBI Account Aggregator; prototype: mock bank), Groww AI fetches the bank balance before
+each debit, subtracts known payments due before the debit date, and compares with the SIPs due plus a ₹1,000 cushion (`autocheck.py`).
+If it's short, it notifies the user (🔔, Dashboard and SIPs tab) with the numbers and a suggested skip, and offers: skip / keep the debit /
+I'll add money / discuss with Groww AI. **It never skips on its own**: the user confirms, the rules are re-checked, and the outcome is
+notified. No reply before the skip deadline means nothing is skipped. The AI agent also has a `check_balance` tool.
+Prototype controls let you set the mock balance and run the scheduled check on demand.

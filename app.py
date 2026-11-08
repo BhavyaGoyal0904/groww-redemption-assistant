@@ -10,6 +10,7 @@ from sip_flows import Planner, CheckIn, EXTRACT_SYSTEM, ordinal
 from sip_actions import SipBook, parse_intent, dtext
 from agent import SipAgent, mistral_caller
 import holding_calc
+from autocheck import run_check, summary as check_summary
 import altair as alt
 import pandas as pd
 
@@ -117,6 +118,12 @@ S = st.session_state
 S.setdefault("screen", "dashboard")
 S.setdefault("fund", None)
 S.setdefault("book", SipBook(FUNDS, DEMO_TODAY))
+S.setdefault("bank", {"linked": False, "balance": 5500, "outflows": [
+    {"date": DUE_DATE - timedelta(days=3), "what": "Credit card bill", "amount": 1500},
+    {"date": DUE_DATE - timedelta(days=2), "what": "Electricity bill", "amount": 800}]})
+S.setdefault("autocheck", False)
+S.setdefault("notes", [])      # notifications: {"text", "read"}
+S.setdefault("auto_res", None)  # pending pre-debit check awaiting the user's decision
 
 
 def due_sips():
@@ -130,9 +137,12 @@ def go(screen, **kw):
 
 
 def topbar():
-    c1, c2 = st.columns([5, 1])
+    c1, c2, c3 = st.columns([5, 1, 1])
     c1.markdown("<div class='topbar'><span class='logo'></span> Mutual Funds</div>", unsafe_allow_html=True)
-    c2.button("👤", key=f"profile-{S.screen}", on_click=go, args=("profile",), help="Profile", type="tertiary")
+    unread = sum(1 for n in S.notes if not n["read"])
+    c2.button(f"🔔{unread if unread else ''}", key=f"bell-{S.screen}", on_click=go, args=("notifications",), help="Notifications",
+              type="tertiary")
+    c3.button("👤", key=f"profile-{S.screen}", on_click=go, args=("profile",), help="Profile", type="tertiary")
 
 
 def back(label, to):
@@ -189,8 +199,94 @@ def start_manage():
     go("checkin")
 
 
+def notify(text):
+    S.notes.append({"text": text, "read": False, "on": f"{DEMO_TODAY.day} {DEMO_TODAY.strftime('%b')}"})
+
+
+def run_auto_check():
+    res = run_check(S.book, S.bank, DUE_DATE)
+    notify(check_summary(res))
+    S.auto_res = res if res["status"] in ("short", "tight") else None
+
+
+def auto_decide(choice):
+    res = S.auto_res
+    if not res:
+        return
+    if choice == "skip":
+        done, blocked = S.book.execute([{"kind": "skip", "fid": x["fund_id"], "value": None} for x in res["suggest_skip"]])
+        lines = done + [f"Not done: {b}" for b in blocked]
+        notify("✅ As you confirmed: " + "; ".join(lines) + ". No debit means no bounce fee. You can undo this on the SIPs tab."
+               if done else "Nothing was skipped: " + "; ".join(blocked))
+    elif choice == "keep":
+        notify(f"Okay, nothing skipped. Your SIPs of {inr(res['due_total'])} will be debited on {res['debit_date']}; "
+               f"please keep at least that much in your account.")
+    elif choice == "add":
+        notify(f"Thanks. Add about {inr(max(res.get('shortfall', 0), 0) + 1000)} before {res['debit_date']} and your SIPs should go through.")
+    elif choice == "discuss":
+        if "dash_msgs" not in S:
+            S.dash_flow = IdleFlow(); S.dash_msgs = [dash_opener()]
+        acts = [{"kind": "skip", "fid": x["fund_id"], "value": None} for x in res["suggest_skip"]]
+        S.proposal = acts or None
+        S.dash_msgs.append(sip_msg(check_summary(res) + ("\n\nTap Confirm to skip, or tell me what you'd prefer: lower an amount, "
+                                                         "move a date, or keep the debit." if acts else ""),
+                                   (["Confirm", "Cancel"] if acts else []) + ["Change SIP amount", "Change SIP date", "Keep as is"]))
+        S.auto_res = None
+        go("dashboard")
+        return
+    S.auto_res = None
+    S.checked_in = True
+
+
+def auto_alert(key):
+    res = S.auto_res
+    if not res:
+        return
+    with st.container(border=True):
+        st.markdown("🔔 **Pre-debit balance check**\n\n" + check_summary(res))
+        c = st.columns(2)
+        if res["suggest_skip"]:
+            names = " + ".join(x["name"] for x in res["suggest_skip"])
+            c[0].button(f"Yes, skip {names}", key=f"as-{key}", on_click=auto_decide, args=("skip",), type="primary", width="stretch")
+        c[1].button("Keep the debit", key=f"ak-{key}", on_click=auto_decide, args=("keep",), width="stretch")
+        c[0].button("I'll add money", key=f"aa-{key}", on_click=auto_decide, args=("add",), width="stretch")
+        c[1].button("Discuss with Groww AI", key=f"ad-{key}", on_click=auto_decide, args=("discuss",), width="stretch")
+
+
+def autocheck_card():
+    with st.container(border=True):
+        st.markdown("**🔄 Auto balance check before each SIP debit**")
+        on = st.toggle("Check my bank balance before each SIP debit", value=S.autocheck, key="ac-toggle")
+        if on != S.autocheck:
+            S.autocheck = on
+            S.bank["linked"] = on
+            notify("Auto balance check is on. I'll check your linked bank balance before each SIP debit and ask before skipping "
+                   "anything." if on else "Auto balance check is off. Your bank balance won't be checked.")
+            st.rerun()
+        st.caption("With your consent, Groww AI reads your linked bank balance (in production via the RBI Account Aggregator "
+                   "framework) shortly before each debit. If it looks short, it suggests skipping a SIP and **asks you first**; "
+                   "it never skips on its own. Prototype: the bank account is a mock.")
+        if S.autocheck:
+            with st.expander("Prototype controls (simulate the scheduled check)"):
+                S.bank["balance"] = st.number_input("Mock bank balance today (₹)", 0, 200000, S.bank["balance"], step=500)
+                st.caption("Known payments before the debit: " + ", ".join(
+                    f"{o['what']} {inr(o['amount'])} on {dtext(o['date'])}" for o in S.bank["outflows"]))
+                st.button(f"Run the check now (for the {DUE_TEXT} debit)", on_click=run_auto_check, width="stretch")
+
+
+def notifications():
+    back("Notifications", "dashboard")
+    if not S.notes:
+        st.info("No notifications yet. Turn on Auto balance check on the SIPs tab to get pre-debit alerts.")
+    for n in reversed(S.notes):
+        st.markdown(f"<div class='card'>{'🆕 ' if not n['read'] else ''}<span class='lbl'>{n['on']}</span><br>{n['text']}</div>",
+                    unsafe_allow_html=True)
+        n["read"] = True
+    auto_alert("notes")
+
+
 def sips():
-    topbar(); tabs(); checkin_banner()
+    topbar(); tabs(); auto_alert("sips"); autocheck_card(); checkin_banner()
     b = S.book
     st.markdown(f"### Active SIPs ({len(b.sips)})")
     for fid, x in b.sips.items():
@@ -215,7 +311,7 @@ def undo_entry(eid):
 
 
 def dashboard():
-    topbar(); tabs()
+    topbar(); tabs(); auto_alert("dash")
     if q := st.chat_input("Ask Groww AI about your SIPs…"):
         if "dash_msgs" not in S:
             S.dash_flow = IdleFlow(); S.dash_msgs = [dash_opener()]
@@ -396,7 +492,8 @@ def ai_agent_turn(text, history, flow):
     """Free text -> Mistral agent with tools. Code validates; the reply is checked; failures fall back safely."""
     ctx = (f"Demo today: {DEMO_TODAY.day} {DEMO_TODAY.strftime('%b %Y')}. Next SIP debit date: {DUE_TEXT}. " + flow.context())
     try:
-        res = sip_agent.run(text, history, S.book, context=ctx, portfolio=portfolio_facts())
+        res = sip_agent.run(text, history, S.book, context=ctx, portfolio=portfolio_facts(),
+                            balance=run_check(S.book, S.bank, DUE_DATE) if S.bank["linked"] else None)
     except Exception as e:
         rule = agent_turn(text)
         fallback = rule if isinstance(rule, dict) else {"role": "assistant", **sip_bot.reply(text, None, history, context=flow.context())}
@@ -767,4 +864,5 @@ with st.sidebar:
         st.rerun()
 
 {"dashboard": dashboard, "explore": explore, "details": details, "redeem": redeem_screen,
- "chat": chat, "profile": profile, "new_sip": new_sip, "sips": sips, "checkin": checkin}.get(S.screen, dashboard)()
+ "chat": chat, "profile": profile, "new_sip": new_sip, "sips": sips, "checkin": checkin,
+ "notifications": notifications}.get(S.screen, dashboard)()
