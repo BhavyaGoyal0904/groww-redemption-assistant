@@ -101,6 +101,8 @@ KB = [
  ("KB-M08","returns","Midcap risk","Midcap funds invest mainly in companies ranked 101-250 by market capitalisation and are labelled Very High risk on the SEBI riskometer. They can fall more than large caps in downturns, but hold many companies, so they are diversified.","SEBI","Nov 2026",""),
  ("KB-M09","returns","Absolute return vs XIRR","The +10.92% on the holding card is an absolute return. For SIPs, XIRR (annualised, accounting for each instalment's date) is the fairer measure.","AMFI","Nov 2026",""),
  ("KB-M10","returns","SIPs in falling markets","When prices fall, each SIP instalment buys more units (rupee-cost averaging), which can lower the average cost per unit.","AMFI","Nov 2026",""),
+ ("KB-M12","returns","This SIP's XIRR and cost of redeeming now","For this holding ({h_invested} invested over {months} monthly instalments of {sip_amt}, now worth {h_value}), the XIRR is about {xirr} a year. Redeeming everything now would cost about {rcost_full} in exit load and tax, leaving about {net_now}.","CALC","live","Calculated in holding_calc.py; assumes equal % return on every instalment"),
+ ("KB-M13","returns","Continue-vs-stop illustration","Illustration: keeping {h_value} invested and continuing {sip_amt} a month. After 5 years: invested {inv5}; value about {fv5_8} at 8% a year or {fv5_12} at 12%. After 10 years: invested {inv10}; about {fv10_8} at 8% or {fv10_12} at 12%. Assumed rates are illustrations, not predictions.","CALC","live","Illustrative"),
  ("KB-M11","returns","Compounding illustration for this holding","If "+N["V"]+" grew at an assumed 12% a year it would be about "+N["G5_12"]+" in 5 years and "+N["G10_12"]+" in 10 years; at 8% a year, about "+N["G5_8"]+" and "+N["G10_8"]+". Assumed rates are illustrations, not predictions.","CALC","Nov 2026","Illustrative"),
  # Ops / trust
  ("KB-O01","other","Units held in your name","Mutual fund units are held in your own folio with the fund house (AMC) and its registrar, not by the app. You can verify them via a Consolidated Account Statement from CAMS, KFintech or MF Central.","MFC","Nov 2026",""),
@@ -191,23 +193,23 @@ r("L12","need_money","loan_followup","Is taking a loan risky?","is loan a bad id
 
 # ---------- RETURNS ----------
 r("T01","returns","reason","Concerned about returns","returns are bad | not happy with returns",
- "That's a fair concern. Your holding is currently up 10.92%. What's worrying you most?",
+ "That's a fair concern, so let's start with your own SIP. You've invested {h_invested} over {months} months and it's now worth {h_value}. The 10.92% on the card is your total gain, not a yearly figure: your SIP's yearly return (XIRR) is about {xirr}. What's worrying you most?",
  "The fund fell recently | I think the market will fall | Returns are lower than expected | Doing worse than other funds","clarify","")
 r("T02","returns","detail","The fund fell recently","nav dropped | lost money recently | fund down",
- "Short-term falls are common in equity, and the data shows they tend to smooth out with time. Since 1999, the Nifty 50 TRI was negative in about 24% of 1-year periods, about 6% of 3-year periods and in none of the 7-year periods. For midcaps specifically, the Nifty Midcap 150 TRI was -0.6% over the last 1 year but 17.6% a year over 10 years (as of Sep 2026)."+PAST,
- "Why do long-term investors do better? | What if I exit and re-enter later? | Just redeem","answer","KB-M01|KB-M03")
+ "Your SIP is still earning about {xirr} a year overall. Short-term falls are common in equity, and the data shows they tend to smooth out with time. Since 1999, the Nifty 50 TRI was negative in about 24% of 1-year periods, about 6% of 3-year periods and in none of the 7-year periods. For midcaps specifically, the Nifty Midcap 150 TRI was -0.6% over the last 1 year but 17.6% a year over 10 years (as of Sep 2026)."+PAST,
+ "Show this as a chart | Keep units, pause SIP instead | What if I exit and re-enter later? | Just redeem","answer","KB-M12|KB-M01|KB-M03")
 r("T03","returns","detail","I think the market will fall","market crash coming | want to exit before fall | sell before market drops",
  "Nobody can predict that reliably, and timing exits is harder than it looks. From 2005 to 2026, staying invested in the Nifty 50 TRI returned 13.7% a year; missing just the 10 best days cut it to 9.8%. Those best days often come within two weeks of the worst ones, right when people have exited."+PAST,
  "What happened in 2020? | What if I exit and re-enter later? | Just redeem","answer","KB-M05|KB-M06")
 r("T04","returns","detail","Returns are lower than expected","only 10% | expected more",
- "Two things help put this in context. First, the 10.92% is an absolute return; for SIPs, XIRR (shown in holding details) gives the yearly rate. Second, year-to-year returns vary widely: Nifty 50 TRI 1-year returns since 1999 ranged from -55% to +108%, while 10-year returns ranged from 5% to 22% a year."+PAST,
- "What is XIRR? | Why do long-term investors do better? | Just redeem","answer","KB-M09|KB-M02")
+ "Completely fair to want more. A few things that may change the picture:\n- **Your SIP is earning about {xirr} a year (XIRR).** The 10.92% on the card is the total gain over {months} months, not a yearly figure.\n- **{months} months is short for a midcap fund.** The Nifty Midcap 150 TRI returned -0.6% over the last year, but 17.6% a year over 10 years (as of Sep 2026).\n- **Time has smoothed out bad periods.** Since 1999, the Nifty 50 TRI was negative in about 24% of 1-year periods and in none of the 7-year periods.\n- **Redeeming now costs about {rcost_full}** in exit load and tax.\n"+PAST.strip()+" Whatever you choose is up to you.",
+ "Show what continuing could look like | Show this as a chart | Keep units, pause SIP instead | Just redeem","answer","KB-M12|KB-M09|KB-M03|KB-M01")
 r("T05","returns","detail","Doing worse than other funds","underperforming | other funds better",
  "A fair check is to compare it with its benchmark (Nifty Midcap 150 TRI) and the midcap category average over 3-5 years, not a few months; the monthly factsheet has these. If you decide to move to another fund, note that switching counts as a redemption, so exit load and tax apply. I can't recommend specific funds.",
  "What does switching cost? | Just redeem","answer","KB-R11|KB-M03")
 r("T06","returns","detail","Why do long-term investors do better?","markets reward long term | long term investing benefit | why does staying invested help | why stay invested | long term returns",
  "Over long periods, returns follow company earnings growth, and short-term swings matter less. Since 1999, the worst 10-year return for the Nifty 50 TRI was still +5% a year (average about 14%). One study found midcap funds delivered over 15% a year in 8 of 10 decade-long periods."+PAST,
- "Show what my money could become | Just redeem","answer","KB-M02|KB-M04")
+ "Show what continuing could look like | Show this as a chart | Just redeem","answer","KB-M02|KB-M04")
 r("T07","returns","detail","What if I exit and re-enter later?","sell now buy back at lower | re-enter after fall",
  "That needs two correct calls: when to get out and when to get back in. You'd also pay exit load and tax on the way out. The data shows how costly a miss can be: missing the 10 best days from 2005 to 2026 cut Nifty 50 TRI returns from 13.7% to 9.8% a year."+PAST,
  "What happened in 2020? | Just redeem","answer","KB-M05|KB-R01|KB-R03")
@@ -222,13 +224,22 @@ r("T10","returns","detail","Can I lose all my money?","will it go to zero | is i
  "Why do long-term investors do better? | Just redeem","answer","KB-M08")
 r("T11","returns","detail","Should I stop my SIP since the market is falling?","pause sip in falling market",
  "That's your call. When prices fall, each SIP instalment buys more units, which can lower your average cost. Stopping a SIP doesn't sell your existing units; it only stops new ones.",
- "Keep my investment | Just redeem","answer","KB-M10|KB-R12")
+ "Keep units, pause SIP instead | Keep my investment | Just redeem","answer","KB-M10|KB-R12")
 r("T12","returns","detail","Should I move to an FD instead?","fd safer | move to fixed deposit",
  "I can't advise on that, but here are the facts: an FD gives a fixed rate, while equity can be higher or lower. Moving money out counts as a redemption, so exit load and tax apply. For a personal plan, a SEBI-registered investment adviser can help.",
  "What does it cost to redeem? | Just redeem","decline","KB-R11|KB-O04")
 r("T13","returns","detail","What is XIRR?","xirr meaning",
- "XIRR is your annualised return that accounts for the date of each SIP instalment. The absolute return just compares total value with total invested. You can find your XIRR in the holding details.",
- "Back | Just redeem","answer","KB-M09")
+ "XIRR is your yearly return, accounting for when each SIP instalment was invested. Yours is about {xirr} a year. The 10.92% on the card is the absolute return: total value against total invested, however long each instalment has been in. Your XIRR is also shown on the Investment details screen.",
+ "Show what continuing could look like | Just redeem","answer","KB-M12|KB-M09")
+r("T14","returns","detail","Show what continuing could look like","what if I continue | future value if I keep investing | how much will I have",
+ "As an illustration, not a prediction: if you keep your {h_value} invested and continue {sip_amt} a month:\n- **In 5 years** you'd have put in {inv5} in total. At 8% a year that could be about {fv5_8}; at 12%, about {fv5_12}\n- **In 10 years** you'd have put in {inv10}. At 8% a year, about {fv10_8}; at 12%, about {fv10_12}\nIf you redeem everything today, you'd receive about {net_now} after exit load and tax. Returns can be lower or even negative, and the choice is yours.",
+ "Show this as a chart | Keep units, pause SIP instead | Keep my investment | Just redeem","answer","KB-M13|KB-M12")
+r("T15","returns","detail","Show this as a chart","show chart | show data | graph",
+ "Here's how the holding period has changed outcomes in the past:",
+ "Show what continuing could look like | Keep my investment | Just redeem","chart","KB-M01|KB-M03")
+r("T16","returns","detail","Keep units, pause SIP instead","pause sip instead | stop adding money | don't want to invest more right now | reduce sip instead",
+ "Redeeming and stopping your SIP are two separate choices. If the worry is putting more money in right now, you could keep your {h_value} invested (no exit load or tax today) and skip or lower your {sip_amt} SIP for a while. I can set that up for you, and nothing changes until you confirm.",
+ "Skip my next SIP instead | Lower my SIP instead | Just redeem","answer","KB-R12|KB-M12")
 
 # ---------- GOAL COMPLETE ----------
 r("P01","goal_complete","reason","My goal is complete","reached target | achieved goal",

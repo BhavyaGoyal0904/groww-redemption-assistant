@@ -9,6 +9,9 @@ from bot import Bot, norm, SYSTEM_SIP
 from sip_flows import Planner, CheckIn, EXTRACT_SYSTEM, ordinal
 from sip_actions import SipBook, parse_intent, dtext
 from agent import SipAgent, mistral_caller
+import holding_calc
+import altair as alt
+import pandas as pd
 
 st.set_page_config(page_title="Redemption Assistant", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
@@ -80,6 +83,8 @@ def get_sip_bot(key, model):
 
 
 bot = get_bot(secret("MISTRAL_API_KEY"), secret("MISTRAL_MODEL", "ministral-14b-2512"))
+_m = next(f for f in FUNDS if f["id"] == AI_FUND)
+bot.fill = holding_calc.compute(_m["cur"], _m["inv"], _m["sip"], _m["day"])
 sip_bot = get_sip_bot(secret("MISTRAL_API_KEY"), secret("MISTRAL_MODEL", "ministral-14b-2512"))
 sip_agent = (SipAgent(mistral_caller(secret("MISTRAL_API_KEY"), secret("MISTRAL_MODEL", "ministral-14b-2512")), sip_bot)
              if secret("MISTRAL_API_KEY") else None)
@@ -195,7 +200,7 @@ def sips():
                     f"<span class='lbl'>{inr(x['amount'])} monthly · {ordinal(x['day'])}</span><span class='lbl'>{status}</span></div></div>",
                     unsafe_allow_html=True)
     st.markdown(f"<div class='disc'>Total {inr(b.total())} a month · Autopay limit ₹15,000</div>", unsafe_allow_html=True)
-    st.button("✨ Ask Groww AI to skip or change a SIP", on_click=start_manage, use_container_width=True)
+    st.button("✨ Ask Groww AI to skip or change a SIP", on_click=start_manage, width="stretch")
     if b.log:
         st.markdown("#### Changes made by Groww AI")
         for e in reversed(b.log):
@@ -246,7 +251,7 @@ def explore():
     cols = st.columns(3)
     for i, c in enumerate(["High return", "SIP with ₹500", "Tax Saving", "Large Cap", "Mid Cap", "Small Cap"]):
         cols[i % 3].markdown(f"<div class='card' style='text-align:center'>{c}</div>", unsafe_allow_html=True)
-    st.button("Start a new SIP", type="primary", use_container_width=True, on_click=start_planner)
+    st.button("Start a new SIP", type="primary", width="stretch", on_click=start_planner)
 
 
 def start_planner():
@@ -517,10 +522,34 @@ def agent_turn(text):
     return agent_msg("Here's what I'll do, after checking Groww's rules:\n\n" + "\n\n".join(blocks) + tail, chips, "agent_proposal")
 
 
+def md_lists(text):
+    """Blank lines around bullet lists so Markdown doesn't merge them with surrounding sentences."""
+    text = re.sub(r"(?m)^(?!- )(.+)\n- ", r"\1\n\n- ", text)
+    return re.sub(r"(?m)^(- .+)\n(?!- |\n)", r"\1\n\n", text)
+
+
+def horizon_charts():
+    neg = pd.DataFrame({"Holding period": ["1 year", "3 years", "5 years", "7 years"], "% of periods with a loss": [24, 6, 0.1, 0]})
+    mid = pd.DataFrame({"Holding period": ["1 year", "3 years", "5 years", "10 years"], "Return per year (%)": [-0.6, 6.4, 14.2, 17.6]})
+    st.markdown("**How often the Nifty 50 lost money** (Nifty 50 TRI, since 1999)")
+    st.altair_chart(alt.Chart(neg).mark_bar(color="#e5484d").encode(
+        x=alt.X("Holding period", sort=None, axis=alt.Axis(labelAngle=0)), y="% of periods with a loss",
+        tooltip=list(neg.columns)).properties(height=180), width="stretch")
+    st.markdown("**Midcap index return per year, by period** (Nifty Midcap 150 TRI, to Sep 2026)")
+    st.altair_chart(alt.Chart(mid).mark_bar().encode(
+        x=alt.X("Holding period", sort=None, axis=alt.Axis(labelAngle=0)), y="Return per year (%)",
+        color=alt.condition(alt.datum["Return per year (%)"] < 0, alt.value("#e5484d"), alt.value("#00b386")),
+        tooltip=list(mid.columns)).properties(height=180), width="stretch")
+    st.caption("Sources: FundsIndia Wealth Conversations (Oct 2026), Baroda BNP Paribas Mid Cap Fund factsheet (Sep 2026). "
+               "Past returns don't guarantee future returns.")
+
+
 def render_msgs(msgs, kb_lookup):
     for i, m in enumerate(msgs):
         with st.chat_message(m["role"], avatar="✨" if m["role"] == "assistant" else "🙂"):
-            st.markdown(re.sub(r"(?m)^(?!- )(.+)\n- ", r"\1\n\n- ", m["text"]))
+            st.markdown(md_lists(m["text"]))
+            if m.get("chart") == "horizon":
+                horizon_charts()
             if m["role"] == "assistant" and i > 0 and m.get("mode") in BADGE:
                 st.markdown(f"<span class='badge'>{BADGE.get(m['mode'], '')}</span>", unsafe_allow_html=True)
                 if m.get("checks") or m.get("kb"):
@@ -539,7 +568,7 @@ def render_chips(msgs, key, cb, args=()):
     if msgs and msgs[-1]["role"] == "assistant" and last.get("chips"):
         cols = st.columns(2)
         for j, c in enumerate(last["chips"]):
-            cols[j % 2].button(c, key=f"{key}-{len(msgs)}-{j}", on_click=cb, args=(c,) + args, use_container_width=True)
+            cols[j % 2].button(c, key=f"{key}-{len(msgs)}-{j}", on_click=cb, args=(c,) + args, width="stretch")
 
 
 def new_sip():
@@ -562,7 +591,7 @@ def new_sip():
     fund = st.selectbox("Fund", [f["name"] for f in FUNDS])
     amt = st.number_input("Monthly amount (₹)", min_value=500, value=int(max(amt0, 500)), step=500)
     day = st.selectbox("SIP date (every month)", days, index=days.index(day0) if day0 in days else 4, format_func=ordinal)
-    if st.button(f"Start SIP of {inr(amt)}/month", type="primary", use_container_width=True):
+    if st.button(f"Start SIP of {inr(amt)}/month", type="primary", width="stretch"):
         st.success(f"Prototype: no real SIP is created. In the app, this would start a {inr(amt)} monthly SIP "
                    f"in {fund} on the {ordinal(day)} of every month.")
 
@@ -593,8 +622,8 @@ def choose(screen):
 def consult_dialog():
     st.markdown("<h4 style='text-align:center'>Before redeeming would you like to consult to AI?</h4>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    c1.button("Yes", type="primary", use_container_width=True, on_click=choose, args=("chat",))
-    c2.button("No", use_container_width=True, on_click=choose, args=("redeem",))
+    c1.button("Yes", type="primary", width="stretch", on_click=choose, args=("chat",))
+    c2.button("No", width="stretch", on_click=choose, args=("redeem",))
     if S.get("chose"):  # callbacks ran inside the dialog's own rerun: refresh the whole page to leave it
         S.chose = False
         st.rerun()
@@ -610,7 +639,8 @@ def details():
 <div class="r"><div class="lbl">Total Returns</div>{ret_html(f['cur'] - f['inv'], f['inv'])}</div>
 <div><div class="lbl">Invested</div><div class="val">{inr(f['inv'])}</div></div>
 <div class="r"><div class="lbl">1D Returns</div>{ret_html(f['d1'], f['cur'] - f['d1'])}</div></div>
-<div class="sep"></div><div style="display:flex;justify-content:space-between"><span class="lbl">Investment type</span><b>SIP</b></div></div>""",
+<div class="sep"></div><div style="display:flex;justify-content:space-between"><span class="lbl">XIRR (yearly return)</span><b>{holding_calc.compute(f['cur'], f['inv'], f['sip'], f['day'])['xirr']}</b></div>
+<div style="display:flex;justify-content:space-between;margin-top:8px"><span class="lbl">Investment type</span><b>SIP</b></div></div>""",
                 unsafe_allow_html=True)
     st.markdown("#### Your investment")
     st.markdown(f"""<div class="row"><span class="lbl">Folio number</span><span>{f['folio']}</span></div>
@@ -619,9 +649,9 @@ def details():
 <div class="row"><span>📈 View fund details</span><span>›</span></div>""", unsafe_allow_html=True)
     st.markdown("<p class='disc' style='margin-top:18px'>Manage your investment in this fund</p>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    if c1.button("Redeem", use_container_width=True):
+    if c1.button("Redeem", width="stretch"):
         consult_dialog()
-    if c2.button("Invest more", type="primary", use_container_width=True):
+    if c2.button("Invest more", type="primary", width="stretch"):
         st.toast("Invest more isn't part of this prototype.")
 
 
@@ -635,7 +665,7 @@ def redeem_screen():
     amt = f["cur"] if mode == "All units" else st.number_input("Amount (₹)", 100, f["cur"], min(20000, f["cur"]), step=500)
     st.caption("Requests before 3 PM on a business day get today's NAV; money usually reaches your bank in 2-3 working days. "
                "Exit load and tax depend on when each SIP instalment was bought.")
-    if st.button(f"Redeem {inr(amt)}", type="primary", use_container_width=True):
+    if st.button(f"Redeem {inr(amt)}", type="primary", width="stretch"):
         st.success("Prototype: no real order is placed. In the app, this would submit your redemption.")
     if S.fund == AI_FUND:
         st.button("Not sure? Ask Groww AI first", on_click=lambda: (go("chat"), S.pop("msgs", None)), type="tertiary")
@@ -660,6 +690,12 @@ BADGE = {
 
 
 def send(text):
+    t = norm(text)
+    if t in ("skip my next sip instead", "lower my sip instead"):
+        start_manage()
+        cmd = "Skip Motilal Oswal Midcap this month" if t.startswith("skip") else "reduce my motilal sip"
+        S.ck_msgs += [{"role": "user", "text": text}, agent_turn(cmd)]
+        return
     if norm(text) in NAV:
         go(NAV[norm(text)])
         return
@@ -693,27 +729,14 @@ def chat():
         if S.screen != "chat":
             st.rerun()
     msgs = S.msgs
-    for i, m in enumerate(msgs):
-        with st.chat_message(m["role"], avatar="✨" if m["role"] == "assistant" else "🙂"):
-            st.markdown(re.sub(r"(?m)^(?!- )(.+)\n- ", r"\1\n\n- ", m["text"]))
-            if m["role"] == "assistant" and i > 0:
-                st.markdown(f"<span class='badge'>{BADGE.get(m['mode'], '')}</span>", unsafe_allow_html=True)
-                if m.get("checks") or m.get("kb"):
-                    with st.expander("Quality checks & sources"):
-                        for name, ok, detail in m.get("checks", []):
-                            st.markdown(f"{'✅' if ok else '❌'} {name} <span class='badge'>· {detail}</span>", unsafe_allow_html=True)
-                        for k in m.get("kb", []):
-                            kb = bot.kb_by_id.get(k)
-                            if kb:
-                                src = f"[{kb['source_name']}]({kb['source_url']})" if kb["source_url"] else kb["source_name"]
-                                st.markdown(f"**{k}** · {kb['topic']} — {src} _(data as of {kb['data_as_of']})_")
+    render_msgs(msgs, bot.kb_by_id)
     last = msgs[-1]
     if last["role"] == "assistant" and last.get("chips"):
         if len(msgs) == 1:
             st.caption("Choose a reason, or type your own")
         cols = st.columns(2)
         for j, c in enumerate(last["chips"]):
-            cols[j % 2].button(c, key=f"chip-{len(msgs)}-{j}", on_click=send, args=(c,), use_container_width=True)
+            cols[j % 2].button(c, key=f"chip-{len(msgs)}-{j}", on_click=send, args=(c,), width="stretch")
     st.markdown("<div class='disc'>AI guidance is informational, not investment advice. You're in control of your investment decisions.</div>",
                 unsafe_allow_html=True)
     st.button("Continue to redeem →", key="redeem-link", on_click=go, args=("redeem",), type="tertiary")
@@ -738,7 +761,7 @@ with st.sidebar:
 3. AI picks the closest reviewed answers, then writes a reply from them and their sourced facts
 4. The reply must pass every check (sources cited, every number in the sources, no advice, no pressure), else the reviewed answer is shown
 5. Nothing matches → "I'm not sure" plus an official source""")
-    if st.button("Restart prototype", use_container_width=True):
+    if st.button("Restart prototype", width="stretch"):
         for k in list(S.keys()):
             del S[k]
         st.rerun()

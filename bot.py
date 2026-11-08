@@ -74,6 +74,11 @@ def toks(s):
     return [stem(t) for t in TOKEN.findall(s.lower()) if t not in STOP]
 
 
+class _Safe(dict):
+    def __missing__(self, k):
+        return "{" + k + "}"
+
+
 def norm(s):
     return re.sub(r"[\s?.!]+$", "", re.sub(r"\s+", " ", (s or "").lower().strip()))
 
@@ -114,6 +119,7 @@ class Bot:
                  kb_file="knowledge_base.csv", system=None, context=None, min_score=None):
         self.resp, self.kb = load(resp_file, kb_file)
         self.system = system or SYSTEM
+        self.fill = {}  # live numbers for {placeholders} in reviewed answers / facts (set by the app)
         if min_score is not None:
             self.MIN_SCORE = min_score
         self.context = context or (f"User's holding: {HOLDING['fund']}, current value {HOLDING['value']}, "
@@ -167,9 +173,15 @@ class Bot:
     # ---------- internals ----------
     def _curated(self, rid, mode, checks=None):
         r = self.by_id[rid]
-        return {"text": r["bot_response"], "chips": [c.strip() for c in r["follow_up_chips"].split("|") if c.strip()],
+        out = {"text": self.render(r["bot_response"]), "chips": [c.strip() for c in r["follow_up_chips"].split("|") if c.strip()],
                 "mode": mode, "kb": [k for k in r["kb_refs"].split("|") if k], "checks": checks or [],
                 "id": rid, "path": r["reason_path"] if r["stage"] == "reason" else None}
+        if r["response_type"] == "chart":
+            out["chart"] = "horizon"
+        return out
+
+    def render(self, text):
+        return text.format_map(_Safe(self.fill)) if self.fill else text
 
     def _rank(self, text, path):
         s = self.r_index.scores(text)
@@ -202,8 +214,8 @@ class Bot:
 
     def _generate(self, text, ids, path, history, context=None):
         kb_ids = self._kb_for(text, ids)
-        answers = "\n".join(f"[{rid}] Q: {self.by_id[rid]['user_input']}\nA: {self.by_id[rid]['bot_response']}" for rid in ids)
-        facts = "\n".join(f"[{k}] {self.kb_by_id[k]['content']}" for k in kb_ids)
+        answers = "\n".join(f"[{rid}] Q: {self.by_id[rid]['user_input']}\nA: {self.render(self.by_id[rid]['bot_response'])}" for rid in ids)
+        facts = "\n".join(f"[{k}] {self.render(self.kb_by_id[k]['content'])}" for k in kb_ids)
         chips = list(dict.fromkeys(c.strip() for rid in ids for c in self.by_id[rid]["follow_up_chips"].split("|") if c.strip()))
         hist = "\n".join(f"{m['role']}: {m['text'][:300]}" for m in list(history)[-4:])
         prompt = (f"{context or self.context}\n"
