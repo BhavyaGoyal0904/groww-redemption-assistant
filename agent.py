@@ -19,6 +19,11 @@ TOOLS = [
                        "autopay limit and today's date. Call this before talking about specific SIPs.",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
+        "name": "get_portfolio",
+        "description": "Get the user's mutual fund holdings: current value, invested amount and returns per fund, and totals. "
+                       "Facts only; never use them to recommend buying, selling or switching.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
         "name": "search_knowledge",
         "description": "Search the reviewed SIP knowledge base (failed debits, bounce charges, cancellation rule, skipping, editing, "
                        "mandate limits, step-up). Use it for any factual question.",
@@ -37,7 +42,7 @@ TOOLS = [
 ]
 
 SYSTEM = """You are Groww AI, an agent that helps users keep their SIP debits from failing.
-You can look up their SIPs, search the knowledge base, and propose changes: skip an instalment, change the SIP date, or change the amount.
+You can look up their SIPs and holdings, search the knowledge base, and propose changes: skip an instalment, change the SIP date, or change the amount.
 
 How to act:
 - Call list_sips before discussing specific SIPs. Map fund names the user mentions to fund_id.
@@ -96,7 +101,7 @@ class SipAgent:
         return {"items": items, "status": "prepared, waiting for the user to tap Confirm" if actions else "nothing can be prepared"}, actions
 
     # ---------- loop ----------
-    def run(self, text, history, book, context=""):
+    def run(self, text, history, book, context="", portfolio=None):
         msgs = [{"role": "system", "content": SYSTEM + ("\n\nContext: " + context if context else "")}]
         for m in list(history)[-8:]:
             if m.get("text"):
@@ -117,6 +122,8 @@ class SipAgent:
                     args = {}
                 if fn == "list_sips":
                     res = self._list_sips(book)
+                elif fn == "get_portfolio":
+                    res = portfolio or {"note": "portfolio not available here"}
                 elif fn == "search_knowledge":
                     res = self._search(args.get("query", text))
                     kb_ids += [f["id"] for f in res.get("facts", [])]

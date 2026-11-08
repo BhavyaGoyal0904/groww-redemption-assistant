@@ -210,7 +210,13 @@ def undo_entry(eid):
 
 
 def dashboard():
-    topbar(); tabs(); checkin_banner()
+    topbar(); tabs()
+    if q := st.chat_input("Ask Groww AI about your SIPs…"):
+        if "dash_msgs" not in S:
+            S.dash_flow = IdleFlow(); S.dash_msgs = [dash_opener()]
+        flow_send(q.strip()[:500], "dash_flow", "dash_msgs")
+        if S.screen != "dashboard":
+            st.rerun()
     cur = sum(f["cur"] for f in FUNDS); inv = sum(f["inv"] for f in FUNDS); d1 = sum(f["d1"] for f in FUNDS)
     st.markdown(f"### Investments ({len(FUNDS)})")
     st.markdown(f"""<div class="card"><div class="grid">
@@ -219,6 +225,7 @@ def dashboard():
 <div><div class="lbl">Invested</div><div class="val">{inr(inv)}</div></div>
 <div class="r"><div class="lbl">1D Returns</div>{ret_html(round(d1, 2), cur - d1)}</div></div>
 <div class="sep"></div><span class="lbl">XIRR</span> <b>37.67%</b></div>""", unsafe_allow_html=True)
+    dash_agent()
     st.caption("Tap a fund to see details")
     for f in FUNDS:
         with st.container(border=True):
@@ -267,7 +274,11 @@ def flow_send(text, flow_key, msgs_key):
         msgs += [{"role": "user", "text": text},
                  sip_msg(f"Done. I've filled in {inr(flow.sip)} on the {ordinal(flow.result['day'])} below. Pick a fund and confirm.")]
         return
-    if flow_key == "checkin":
+    if flow_key == "dash_flow" and t.startswith("check my") and t.endswith("debit"):
+        S.dash_flow = CheckIn(due_sips(), DUE_TEXT)
+        msgs += [{"role": "user", "text": text}] + S.dash_flow.start()
+        return
+    if flow_key in AGENT_FLOWS:
         out = checkin_fixed_turn(text, msgs)
         if out == "nav":
             return
@@ -277,14 +288,14 @@ def flow_send(text, flow_key, msgs_key):
     msgs.append({"role": "user", "text": text})
     with st.spinner("Thinking…"):
         out, answered = flow.handle(text)
-        if not answered and flow_key == "checkin":
+        if not answered and flow_key in AGENT_FLOWS:
             out = [ai_agent_turn(text, msgs[:-1], flow)]
         elif not answered:
             r = sip_bot.reply(text, None, msgs[:-1], context=flow.context())
             out = [{"role": "assistant", **r}]
         if not answered:
             again = flow.ask()
-            if again and flow_key == "checkin" and S.get("proposal"):
+            if again and flow_key in AGENT_FLOWS and S.get("proposal"):
                 again = None  # don't interrupt a pending confirmation
             if again:
                 again["text"] = "Coming back to your plan: " + again["text"] if flow_key == "planner" else again["text"]
@@ -298,6 +309,61 @@ def sip_msg(text, chips=()):
 
 CHIP_INTENTS = {"change sip date": "date", "lower amount from next month": "amount", "change sip amount": "amount",
                 "skip an instalment": "skip"}
+
+
+AGENT_FLOWS = ("checkin", "dash_flow")
+
+
+def portfolio_facts():
+    cur = sum(f["cur"] for f in FUNDS); inv = sum(f["inv"] for f in FUNDS)
+    return {"total_current": cur, "total_invested": inv, "total_returns": cur - inv,
+            "total_returns_pct": round((cur - inv) / inv * 100, 2),
+            "holdings": [{"fund_id": f["id"], "name": f["name"], "category": f["cat"], "current": f["cur"], "invested": f["inv"],
+                          "returns": f["cur"] - f["inv"], "returns_pct": round((f["cur"] - f["inv"]) / f["inv"] * 100, 2)} for f in FUNDS]}
+
+
+class IdleFlow:
+    """Dashboard conversation before/after a check-in: everything typed goes to the agent."""
+    step = "done"
+
+    def handle(self, text):
+        return [], False
+
+    def ask(self):
+        return None
+
+    def context(self):
+        return "Conversation on the portfolio dashboard."
+
+
+def dash_opener():
+    b = S.book
+    due = due_sips()
+    lines = []
+    if due:
+        names = " + ".join(n for _, n, _ in due)
+        lines.append(f"- {inr(sum(a for _, _, a in due))} ({names}) will be debited on {DUE_TEXT}, in 7 days")
+    for fid, x in b.sips.items():
+        if x["history"] and x["history"][-1] in ("skipped", "missed"):
+            lines.append(f"- {x['name']}'s last instalment was {x['history'][-1]}; 3 skipped or missed in a row would cancel it, "
+                         "so it's worth making sure the next one goes through")
+    lines.append(f"- Your SIPs total {inr(b.total())} a month, within your ₹15,000 autopay limit")
+    return sip_msg("Hi! I'm Groww AI. Here's what I noticed in your SIPs:\n" + "\n".join(lines) +
+                   "\n\nI can check whether your balance covers the next debit, answer questions, or skip, move or change a SIP "
+                   "for you (you confirm every change).",
+                   ([f"Check my {DUE_TEXT} debit"] if due else []) + ["Skip an instalment", "Change SIP date", "Change SIP amount"])
+
+
+def dash_agent():
+    if "dash_msgs" not in S:
+        S.dash_flow = IdleFlow()
+        S.dash_msgs = [dash_opener()]
+    with st.container(border=True):
+        st.markdown("<div class='ai-head'>✨ Groww AI <span class='tag'>AI AGENT</span></div>", unsafe_allow_html=True)
+        render_msgs(S.dash_msgs, sip_bot.kb_by_id)
+        render_chips(S.dash_msgs, "dash", flow_send, ("dash_flow", "dash_msgs"))
+        st.caption("Ask anything about your SIPs, or type a change like \"move my Motilal SIP to the 8th\". "
+                   "Nothing changes until you tap Confirm. Not investment advice.")
 
 
 YES = re.compile(r"^(yes|yep|yeah|ok|okay|sure|go ahead|do it|confirm|please do|proceed)\b", re.I)
@@ -325,7 +391,7 @@ def ai_agent_turn(text, history, flow):
     """Free text -> Mistral agent with tools. Code validates; the reply is checked; failures fall back safely."""
     ctx = (f"Demo today: {DEMO_TODAY.day} {DEMO_TODAY.strftime('%b %Y')}. Next SIP debit date: {DUE_TEXT}. " + flow.context())
     try:
-        res = sip_agent.run(text, history, S.book, context=ctx)
+        res = sip_agent.run(text, history, S.book, context=ctx, portfolio=portfolio_facts())
     except Exception as e:
         rule = agent_turn(text)
         fallback = rule if isinstance(rule, dict) else {"role": "assistant", **sip_bot.reply(text, None, history, context=flow.context())}
