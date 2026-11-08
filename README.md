@@ -37,3 +37,11 @@ Every action: propose → validate (shown as ✅/⚠️/❌) → user taps Confi
 Rules checked (`sip_actions.py`): requested more than 2 working days before the debit (Groww), one skip at a time per SIP,
 no 3rd skipped/missed instalment in a row (cancels the SIP), dates 1st–28th, amount ≥ ₹500 (prototype minimum) and within the
 autopay limit (mock ₹15,000). Changes apply to a mock account in the session; the SIPs tab lists them with Undo.
+
+### AI agent (tool calling)
+With `MISTRAL_API_KEY` set, free text in the SIP check-in / SIP chat goes to an AI agent (`agent.py`, Mistral tool calling) that
+decides what to do and can call three tools: `list_sips` (read the user's SIPs), `search_knowledge` (RAG over the SIP knowledge base)
+and `propose_change` (runs the rule checks and prepares a confirmation). **The model can't execute anything**: the change happens only when
+the user taps Confirm (or types "yes, go ahead"), and it's re-validated at that moment. The agent's reply is checked before display:
+every number must come from a tool result, no advice, no pressure, and no claim that a change was made. If a check fails, the
+code-generated proposal (or a reviewed answer) is shown instead; if the API fails, the rule-based agent takes over.

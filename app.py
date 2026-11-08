@@ -8,6 +8,7 @@ import streamlit as st
 from bot import Bot, norm, SYSTEM_SIP
 from sip_flows import Planner, CheckIn, EXTRACT_SYSTEM, ordinal
 from sip_actions import SipBook, parse_intent, dtext
+from agent import SipAgent, mistral_caller
 
 st.set_page_config(page_title="Redemption Assistant", page_icon="✨", layout="centered", initial_sidebar_state="collapsed")
 
@@ -80,6 +81,8 @@ def get_sip_bot(key, model):
 
 bot = get_bot(secret("MISTRAL_API_KEY"), secret("MISTRAL_MODEL", "ministral-14b-2512"))
 sip_bot = get_sip_bot(secret("MISTRAL_API_KEY"), secret("MISTRAL_MODEL", "ministral-14b-2512"))
+sip_agent = (SipAgent(mistral_caller(secret("MISTRAL_API_KEY"), secret("MISTRAL_MODEL", "ministral-14b-2512")), sip_bot)
+             if secret("MISTRAL_API_KEY") else None)
 
 st.markdown("""
 <style>
@@ -265,7 +268,7 @@ def flow_send(text, flow_key, msgs_key):
                  sip_msg(f"Done. I've filled in {inr(flow.sip)} on the {ordinal(flow.result['day'])} below. Pick a fund and confirm.")]
         return
     if flow_key == "checkin":
-        out = agent_turn(text)
+        out = checkin_fixed_turn(text, msgs)
         if out == "nav":
             return
         if out:
@@ -274,10 +277,15 @@ def flow_send(text, flow_key, msgs_key):
     msgs.append({"role": "user", "text": text})
     with st.spinner("Thinking…"):
         out, answered = flow.handle(text)
-        if not answered:
+        if not answered and flow_key == "checkin":
+            out = [ai_agent_turn(text, msgs[:-1], flow)]
+        elif not answered:
             r = sip_bot.reply(text, None, msgs[:-1], context=flow.context())
             out = [{"role": "assistant", **r}]
+        if not answered:
             again = flow.ask()
+            if again and flow_key == "checkin" and S.get("proposal"):
+                again = None  # don't interrupt a pending confirmation
             if again:
                 again["text"] = "Coming back to your plan: " + again["text"] if flow_key == "planner" else again["text"]
                 out.append(again)
@@ -290,6 +298,56 @@ def sip_msg(text, chips=()):
 
 CHIP_INTENTS = {"change sip date": "date", "lower amount from next month": "amount", "change sip amount": "amount",
                 "skip an instalment": "skip"}
+
+
+YES = re.compile(r"^(yes|yep|yeah|ok|okay|sure|go ahead|do it|confirm|please do|proceed)\b", re.I)
+FIXED = {"confirm", "cancel", "undo", "keep as is", "i'll add money", "go to my sips"}
+
+
+def checkin_fixed_turn(text, msgs):
+    """Chips and confirm/cancel/undo are handled by code. Free text goes to the AI agent (or rules if no AI)."""
+    t = norm(text)
+    last = next((m for m in reversed(msgs) if m["role"] == "assistant"), {})
+    if S.get("proposal") and YES.match(t):
+        return agent_turn("Confirm")
+    if text in last.get("chips", []) or t in FIXED or not sip_agent:
+        return agent_turn(text)
+    return None
+
+
+def fmt_items(items):
+    icon = {"ok": "✅", "warn": "⚠️", "error": "❌"}
+    return "\n\n".join(it.get("description", "Change") + "\n" + "\n".join(f"- {icon[c['level']]} {c['text']}" for c in it["checks"])
+                       for it in items)
+
+
+def ai_agent_turn(text, history, flow):
+    """Free text -> Mistral agent with tools. Code validates; the reply is checked; failures fall back safely."""
+    ctx = (f"Demo today: {DEMO_TODAY.day} {DEMO_TODAY.strftime('%b %Y')}. Next SIP debit date: {DUE_TEXT}. " + flow.context())
+    try:
+        res = sip_agent.run(text, history, S.book, context=ctx)
+    except Exception as e:
+        rule = agent_turn(text)
+        fallback = rule if isinstance(rule, dict) else {"role": "assistant", **sip_bot.reply(text, None, history, context=flow.context())}
+        fallback["checks"] = [("AI agent available", False, str(e)[:120])] + fallback.get("checks", [])
+        return fallback
+    S.proposal = res["actions"] or None
+    S.pending = None
+    chips = ["Confirm", "Cancel"] if res["actions"] else []
+    if res["ok"]:
+        body = res["text"]
+        if res["items"]:
+            body += "\n\n" + fmt_items(res["items"]) + ("\n\nNothing changes until you tap Confirm." if res["actions"] else "")
+        return {"role": "assistant", "text": body, "chips": chips or ["Go to my SIPs"], "mode": "agent",
+                "kb": res["kb"], "checks": res["checks"]}
+    if res["items"]:  # AI wording failed a check: show the code-generated proposal instead
+        body = "Here's what I've prepared, after checking Groww's rules:\n\n" + fmt_items(res["items"]) + \
+               ("\n\nNothing changes until you tap Confirm." if res["actions"] else "\n\nThis can't be done as asked.")
+        return {"role": "assistant", "text": body, "chips": chips or ["Change SIP amount", "Change SIP date", "Keep as is"],
+                "mode": "agent_proposal", "kb": [], "checks": res["checks"] + [("Showing the rule-checked proposal instead of the AI wording", True, "")]}
+    r = sip_bot.reply(text, None, history, context=flow.context())
+    r["checks"] = res["checks"] + [("Showing a reviewed answer instead", True, r.get("id") or "")] + r.get("checks", [])
+    return {"role": "assistant", **r}
 
 
 def agent_msg(text, chips, mode):
@@ -530,7 +588,8 @@ NAV = {"confirm redemption": "redeem", "go to holdings": "dashboard", "contact s
 BADGE = {
     "curated": "✅ Reviewed answer", "retrieved": "✅ Reviewed answer (closest match)", "ai": "✨ AI answer · passed all checks",
     "guardrail": "🛡️ Safety rule", "agent_proposal": "🛡️ Rules checked before acting · needs your confirmation",
-    "agent_done": "✅ Change made (prototype account)", "fallback": "⚠️ Not sure: pointing you to an official source", "action": "↪ Prototype action",
+    "agent_done": "✅ Change made (prototype account)",
+    "agent": "🤖 AI agent · tools used, reply checked", "fallback": "⚠️ Not sure: pointing you to an official source", "action": "↪ Prototype action",
 }
 
 
@@ -601,6 +660,8 @@ with st.sidebar:
              "(loan against mutual funds, partial redemption, staying invested) and always leaves the decision to the user.")
     st.caption("Not affiliated with Groww. Not investment advice. Portfolio data is a mock.")
     st.markdown("**AI mode:** " + ("on (Mistral)" if bot.api_key else "off: reviewed answers via keyword search"))
+    st.markdown("**SIP agent:** " + ("on: Mistral with tools (list SIPs, search knowledge, propose change)" if sip_agent
+                                     else "rule-based (no API key)"))
     st.markdown("""**SIP assistants**
 - *Start a new SIP* (Explore): asks salary date, take-home pay, costs, spending, existing SIPs and emergency fund, then a calculator suggests an amount and a date 3 days after salary
 - *SIP check-in* (Dashboard/SIPs card, 7 days before the SIP date): asks about salary timing, big expenses and expected balance, then suggests keeping, skipping, changing date or lowering the amount
